@@ -1,0 +1,644 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates a VPC with 2 private subnets
+
+Parameters:
+  ProjectName:
+    Type: String
+  BlogS3Bucket:
+    Type: String
+  ArtifactsS3Bucket:
+    Type: String
+  ArtifactsS3Prefix:
+    Type: String
+  VpcCIDR:
+    Type: String
+  PrivateSubnet1CIDR:
+    Type: String
+  PrivateSubnet2CIDR:
+    Type: String
+  LambdaBucketManagementRole:
+    Type: String
+
+Mappings:
+  Artifacts:
+    Scripts:
+      Step: add-sparklyr-jar.sh
+      Jar: sparklyr-master-2.12.jar
+  Datasets:
+    S3:
+      Bucket: sagemaker-sample-files
+      Prefix: datasets/tabular/synthetic_credit_card_transactions
+    CSV:
+      transactions: credit_card_transactions-ibm_v2.csv 
+      cards: sd254_cards.csv
+      users: sd254_users.csv
+    
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-vpc
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Ref  PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-subnet ${PrivateSubnet1CIDR}
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, Fn::GetAZs: !Ref AWS::Region]
+      CidrBlock: !Ref  PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-subnet ${PrivateSubnet2CIDR}
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-route-table
+      VpcId: !Ref VPC
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+  
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+
+  SageMakerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for SageMaker RStudio
+      GroupName: !Sub ${ProjectName}-vpc-security-group
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-vpc-security-group
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  SageMakerSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: '-1'
+      GroupId: !GetAtt SageMakerSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt SageMakerSecurityGroup.GroupId
+
+  VPCEndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTPS for VPC Endpoint
+      GroupName: !Sub ${ProjectName}-vpc-endpoint-security-group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !GetAtt SageMakerSecurityGroup.GroupId
+          Description: Allow all inbound HTTPS traffic from SageMaker
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCIDR
+          Description: Allow all inbound HTTPS traffic from VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-vpc-endpoint-security-group
+
+  VPCEndpointS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPC
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+  
+  VPCEndpointSagemakerAPI:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sagemaker.api
+      VpcId: !Ref VPC
+
+  VPCEndpointSageMakerRuntime:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sagemaker.runtime
+      VpcId: !Ref VPC
+
+  VPCEndpointSTS:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sts
+      VpcId: !Ref VPC
+
+  VPCEndpointCW:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
+      VpcId: !Ref VPC
+
+  VPCEndpointCWL:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      VpcId: !Ref VPC
+
+  VPCEndpointLM:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.license-manager
+      VpcId: !Ref VPC
+
+  VPCEndpointECR:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      VpcId: !Ref VPC
+
+  VPCEndpointECRAPI:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
+      VpcId: !Ref VPC
+
+  VPCEndpointEMR:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.elasticmapreduce
+      VpcId: !Ref VPC
+  
+  VPCEndpointGlue:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.glue
+      VpcId: !Ref VPC
+
+  EMRMasterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for EMR master node
+      GroupName: !Sub ${ProjectName}-emr-master-security-group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-emr-master-security-group
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  EMRMasterICMPALLSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+  
+  EMRMasterCoreICMPALLSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+  
+  EMRMasterTCPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRMasterCoreTCPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+  
+  EMRMasterUDPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: udp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRMasterCoreUDPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: udp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+
+  EMRMasterSageMakerTCP8998SecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8998
+      ToPort: 8998
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt SageMakerSecurityGroup.GroupId
+
+  EMRMasterSageMakerTCP10000SecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 10000
+      ToPort: 10000
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt SageMakerSecurityGroup.GroupId
+
+  EMRServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for EMR service access
+      GroupName: !Sub ${ProjectName}-emr-service-security-group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-emr-service-security-group
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  EMRServiceMasterTCP9443SecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 9443
+      ToPort: 9443
+      GroupId: !GetAtt EMRServiceSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRMasterServiceTCP8443SecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8443
+      ToPort: 8443
+      GroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRServiceSecurityGroup.GroupId
+  
+  EMRServiceMasterTCP8443SecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8443
+      ToPort: 8443
+      GroupId: !GetAtt EMRServiceSecurityGroup.GroupId
+      DestinationSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRServiceCoreTCP8443SecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8443
+      ToPort: 8443
+      GroupId: !GetAtt EMRServiceSecurityGroup.GroupId
+      DestinationSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+
+  EMRCoreSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for EMR core nodes
+      GroupName: !Sub ${ProjectName}-emr-core-security-group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-emr-core-security-group
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+  
+  EMRCoreICMPALLSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+
+  EMRCoreMasterICMPALLSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRCoreTCPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+
+  EMRCoreMasterTCPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRCoreUDPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: udp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+    
+  EMRCoreMasterUDPSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: udp
+      FromPort: 0
+      ToPort: 65535
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRMasterSecurityGroup.GroupId
+
+  EMRCoreeServiceTCP8443SecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8443
+      ToPort: 8443
+      GroupId: !GetAtt EMRCoreSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt EMRServiceSecurityGroup.GroupId
+
+  CopyObjectsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Copies S3 objects
+      FunctionName: copy-objects
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Role: !Ref LambdaBucketManagementRole
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import threading
+          import boto3
+          import cfnresponse
+          def copy_objects(source_bucket, dest_bucket, prefix, objects):
+              s3 = boto3.client('s3')
+              for o in objects:
+                  source_key = prefix + '/' + o
+                  copy_source = {
+                      'Bucket': source_bucket,
+                      'Key': source_key
+                  }
+                  # modify destination key for csv data to use with glue data catalog
+                  if o.endswith('.csv'):
+                    dest_key = prefix + '/' + o.replace('.csv', '') + '/' + o
+                  else:
+                    dest_key = source_key
+                  print('copy_source: %s' % copy_source)
+                  print('dest_bucket = %s'%dest_bucket)
+                  print('dest_key = %s' %dest_key)
+                  s3.copy_object(CopySource=copy_source, Bucket=dest_bucket, Key=dest_key)
+          def delete_objects(bucket, prefix, objects):
+              s3 = boto3.client('s3')
+              objects = {'Objects': [{'Key': prefix + '/' + o} for o in objects]}
+              s3.delete_objects(Bucket=bucket, Delete=objects)
+          def timeout(event, context):
+              logging.error('Execution is about to time out, sending failure response to CloudFormation')
+              cfnresponse.send(event, context, cfnresponse.FAILED, {}, None)
+          def lambda_handler(event, context):
+              # make sure we send a failure to CloudFormation if the function
+              # is going to timeout
+              timer = threading.Timer((context.get_remaining_time_in_millis()
+                        / 1000.00) - 0.5, timeout, args=[event, context])
+              timer.start()
+              print('Received event: %s' % json.dumps(event))
+              status = cfnresponse.SUCCESS
+              try:
+                  source_bucket = event['ResourceProperties']['SourceBucket']
+                  dest_bucket = event['ResourceProperties']['DestBucket']
+                  prefix = event['ResourceProperties']['Prefix']
+                  objects = event['ResourceProperties']['Objects']
+                  if event['RequestType'] == 'Delete':
+                      delete_objects(dest_bucket, prefix, objects)
+                  else:
+                      copy_objects(source_bucket, dest_bucket, prefix, objects)
+              except Exception as e:
+                  logging.error('Exception: %s' % e, exc_info=True)
+                  status = cfnresponse.FAILED
+              finally:
+                  timer.cancel()
+                  cfnresponse.send(event, context, status, {}, None)
+
+  CopyDatasets:
+    Type: Custom::CopyDatasets
+    Properties:
+      ServiceToken: !GetAtt CopyObjectsFunction.Arn
+      DestBucket: !Ref BlogS3Bucket
+      SourceBucket: !FindInMap [Datasets, S3, Bucket]
+      Prefix: !FindInMap [Datasets, S3, Prefix]
+      Objects:
+        - !FindInMap [Datasets, CSV, transactions]
+        - !FindInMap [Datasets, CSV, cards]
+        - !FindInMap [Datasets, CSV, users]
+
+  CopyCustomArtifacts:
+    Type: Custom::CopyCustomArtifacts
+    Properties:
+      ServiceToken: !GetAtt CopyObjectsFunction.Arn
+      DestBucket: !Ref BlogS3Bucket
+      SourceBucket: !Ref ArtifactsS3Bucket
+      Prefix: !Ref ArtifactsS3Prefix
+      Objects:
+        - !FindInMap [Artifacts, Scripts, Step]
+        - !FindInMap [Artifacts, Scripts, Jar]
+
+  CleanupBucketFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Clean up S3 bucket
+      FunctionName: cleanup-bucket
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Role: !Ref LambdaBucketManagementRole
+      Timeout: 60
+      Code: 
+        ZipFile: |
+            import json
+            import logging
+            import boto3
+            import cfnresponse
+            logger = logging.getLogger()
+            logger.setLevel(logging.INFO)
+            def lambda_handler(event, context):
+                logger.info("event: {}".format(event))
+                try:
+                    bucket = event['ResourceProperties']['BucketName']
+                    logger.info("bucket: {}, event['RequestType']: {}".format(bucket,event['RequestType']))
+                    if event['RequestType'] == 'Delete':
+                        s3 = boto3.resource('s3')
+                        bucket = s3.Bucket(bucket)
+                        for obj in bucket.objects.filter():
+                            logger.info("delete obj: {}".format(obj))
+                            s3.Object(bucket.name, obj.key).delete()
+
+                    sendResponseCfn(event, context, cfnresponse.SUCCESS)
+                except Exception as e:
+                    logger.info("Exception: {}".format(e))
+                    sendResponseCfn(event, context, cfnresponse.FAILED)
+            def sendResponseCfn(event, context, responseStatus):
+                responseData = {}
+                responseData['Data'] = {}
+                cfnresponse.send(event, context, responseStatus, responseData, "CustomResourcePhysicalID")
+
+  CleanupBucket:
+    Type: Custom::CleanupBucket
+    Properties:
+      ServiceToken: !GetAtt CleanupBucketFunction.Arn
+      BucketName: !Ref BlogS3Bucket
+          
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+  SubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+  SageMakerSecurityGroup:
+    Value: !Ref SageMakerSecurityGroup
+  EMRMasterSecurityGroup:
+    Value: !Ref EMRMasterSecurityGroup
+  EMRCoreSecurityGroup:
+    Value: !Ref EMRCoreSecurityGroup
+  EMRServiceSecurityGroup:
+    Value: !Ref EMRServiceSecurityGroup
+  

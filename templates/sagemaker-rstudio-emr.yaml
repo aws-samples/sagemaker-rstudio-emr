@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates an EMR cluster with Hive tables
+
+Mappings:
+  Artifacts:
+    Scripts:
+      Step: add-sparklyr-jar.sh
+
+Parameters:
+  ArtifactsS3Prefix:
+    Type: String
+  BlogS3Bucket:
+    Type: String
+  EMRClusterName:
+    Type: String
+  EMRMasterInstanceType:
+    Type: String
+  EMRCoreInstanceType:
+    Type: String
+  EMRCoreInstanceCount:
+    Type: String
+  EMRReleaseVersion:
+    Type: String
+  EMRIdleTimeout:
+    Type: String
+  SubnetIds:
+    Type: CommaDelimitedList
+  EMRMasterSecurityGroup:
+    Type: String
+  EMRCoreSecurityGroup:
+    Type: String
+  EMRServiceSecurityGroup:
+    Type: String
+  EMRClusterServiceRole:
+    Type: String
+  EMRClusterAutoScalingeRole:
+    Type: String
+  EMRClusterInstanceProfile:
+    Type: String
+
+Resources:
+  CreditCardDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: credit_card
+
+  Transactions:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref CreditCardDatabase
+      TableInput:
+        Name: transactions
+        Parameters:
+          has_encrypted_data: false
+          classification: csv
+          typeOfData: file
+          skip.header.line.count: "1"
+          delimiter: ","
+        StorageDescriptor:
+          Columns:
+            - Name: user_id
+              Type: bigint
+            - Name: card_id
+              Type: bigint
+            - Name: year
+              Type: bigint
+            - Name: month
+              Type: bigint
+            - Name: day
+              Type: bigint
+            - Name: time_stamp
+              Type: string
+            - Name: amount
+              Type: string
+            - Name: use_chip
+              Type: string
+            - Name: merchant_name
+              Type: string
+            - Name: merchant_city
+              Type: string
+            - Name: merchant_state
+              Type: string
+            - Name: merchant_zip_code
+              Type: string
+            - Name: merchant_category_code
+              Type: bigint
+            - Name: is_error
+              Type: string
+            - Name: is_fraud
+              Type: string  
+          Compressed: false
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          Location: !Sub s3://${BlogS3Bucket}/datasets/tabular/synthetic_credit_card_transactions/credit_card_transactions-ibm_v2/
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            Parameters:  
+              field.delim: ","
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+          StoredAsSubDirectories: false
+        TableType: EXTERNAL_TABLE
+
+  Cards:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref CreditCardDatabase
+      TableInput:
+        Name: cards
+        Parameters:
+          has_encrypted_data: false
+          classification: csv
+          typeOfData: file
+          skip.header.line.count: "1"
+          delimiter: ","
+        StorageDescriptor:
+          Columns:
+            - Name: user_id
+              Type: bigint
+            - Name: card_id
+              Type: bigint
+            - Name: card_brand
+              Type: string
+            - Name: card_type
+              Type: string
+            - Name: card_number
+              Type: bigint
+            - Name: expire_date
+              Type: string
+            - Name: cvv
+              Type: bigint
+            - Name: has_chip
+              Type: string
+            - Name: number_cards_issued
+              Type: bigint
+            - Name: credit_limit
+              Type: string
+            - Name: account_open_date
+              Type: string
+            - Name: year_pin_last_changed
+              Type: bigint
+            - Name: is_card_on_dark_web
+              Type: string
+          Compressed: false
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          Location: !Sub s3://${BlogS3Bucket}/datasets/tabular/synthetic_credit_card_transactions/sd254_cards/
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            Parameters: 
+              field.delim: ","
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+          StoredAsSubDirectories: false
+        TableType: EXTERNAL_TABLE
+
+  Users:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref CreditCardDatabase
+      TableInput:
+        Name: users
+        Parameters:
+          has_encrypted_data: false
+          classification: csv
+          typeOfData: file
+          skip.header.line.count: "1"
+          delimiter: ","
+        StorageDescriptor:
+          Columns:
+            - Name: name
+              Type: string
+            - Name: current_age
+              Type: bigint
+            - Name: retirement_age
+              Type: bigint
+            - Name: birth_year
+              Type: bigint
+            - Name: birth_month
+              Type: bigint
+            - Name: gender
+              Type: string
+            - Name: address
+              Type: string
+            - Name: apartment
+              Type: bigint
+            - Name: city
+              Type: string
+            - Name: state
+              Type: string
+            - Name: zip_code
+              Type: string
+            - Name: lattitude
+              Type: string
+            - Name: longitude
+              Type: string
+            - Name: per_capita_income_zip_code
+              Type: string
+            - Name: yearly_income
+              Type: string
+            - Name: total_debt
+              Type: string
+            - Name: fico_score
+              Type: bigint
+            - Name: number_credit_cards
+              Type: bigint
+          Compressed: false
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          Location: !Sub s3://${BlogS3Bucket}/datasets/tabular/synthetic_credit_card_transactions/sd254_users/
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            Parameters: 
+              field.delim: ","
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+          StoredAsSubDirectories: false
+        TableType: EXTERNAL_TABLE
+
+  EMRCluster:
+    Type: AWS::EMR::Cluster
+    Properties:
+      Name: !Ref EMRClusterName
+      Tags:
+        - Key: for-use-with-amazon-emr-managed-policies
+          Value: true
+      Applications:
+        - Name: Spark
+        - Name: Hive
+        - Name: Livy
+      AutoScalingRole: !Ref EMRClusterAutoScalingeRole
+      Configurations:
+        - Classification: spark-hive-site
+          ConfigurationProperties:
+            hive.metastore.client.factory.class: com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory
+      EbsRootVolumeSize: 100
+      Instances:
+        CoreInstanceGroup:
+          EbsConfiguration:
+            EbsBlockDeviceConfigs:
+              - VolumeSpecification:
+                  SizeInGB: 320
+                  VolumeType: gp2
+                VolumesPerInstance: 1
+            EbsOptimized: true
+          InstanceCount: !Ref EMRCoreInstanceCount
+          InstanceType: !Ref EMRCoreInstanceType
+          Market: ON_DEMAND
+          Name: Core Node
+        MasterInstanceGroup:
+          EbsConfiguration:
+            EbsBlockDeviceConfigs:
+              - VolumeSpecification:
+                  SizeInGB: 320
+                  VolumeType: gp2
+                VolumesPerInstance: 1
+            EbsOptimized: true
+          InstanceCount: 1
+          InstanceType: !Ref EMRMasterInstanceType
+          Market: ON_DEMAND
+          Name: Master Node
+        Ec2SubnetId: !Select [0, !Ref SubnetIds]
+        EmrManagedMasterSecurityGroup: !Ref EMRMasterSecurityGroup
+        EmrManagedSlaveSecurityGroup: !Ref EMRCoreSecurityGroup
+        ServiceAccessSecurityGroup: !Ref EMRServiceSecurityGroup
+        TerminationProtected: false
+      JobFlowRole: !Ref EMRClusterInstanceProfile
+      LogUri: !Sub s3://${BlogS3Bucket}/cluster-logs/
+      ReleaseLabel: !Ref EMRReleaseVersion
+      ServiceRole: !Ref EMRClusterServiceRole
+      VisibleToAllUsers: true
+      Steps:
+        - ActionOnFailure: CONTINUE
+          HadoopJarStep:
+            Jar: command-runner.jar
+            Args:
+              - "bash"
+              - "-c"
+              - !Sub 
+                - "aws s3 cp s3://${Bucket}/${Prefix}/${Script} /home/hadoop/${Script} && sudo chmod +x /home/hadoop/${Script} && sh /home/hadoop/${Script} ${BlogS3Bucket} ${Prefix}"
+                - {
+                  Bucket: !Ref BlogS3Bucket,
+                  Prefix: !Ref ArtifactsS3Prefix,
+                  Script: !FindInMap [Artifacts, Scripts, Step]
+                  }
+          Name: Run bash script
+      AutoTerminationPolicy:
+        IdleTimeout: !Ref EMRIdleTimeout

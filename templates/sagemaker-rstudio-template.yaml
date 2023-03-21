@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates the infrastructure for RStudio on Amazon SageMaker to communicate with Amazon EMR
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Required SageMaker RStudio Domain and EMR Parameters
+        Parameters:
+          - ProjectName
+      - Label:
+          default: Optional SageMaker RStudio Domain Parameters
+        Parameters:
+          - RStudioConnectUrl
+          - RStudioPackageManagerUrl
+    ParameterLabels:
+      ProjectName:
+        default: Project Name
+      RStudioConnectUrl:
+        default: RStudio Connect Url
+      RStudioPackageManagerUrl:
+        default: RStudio Package Manager Url
+
+Parameters:
+  ProjectName:
+    Description: Project Name
+    Type: String
+    Default: sagemaker-rstudio-emr
+  RStudioConnectUrl:
+    Description: A URL pointing to a SageMaker RStudio Connect server
+    Type: String
+    Default: ''
+  RStudioPackageManagerUrl:
+    Description: A URL pointing to a SageMaker RStudio Package Manager server
+    Type: String
+    Default: ''
+
+Mappings:
+  VpcConfigurations:
+    CIDR:
+      VPC: 10.1.0.0/16
+      PrivateSubnet1: 10.1.1.0/24
+      PrivateSubnet2: 10.1.2.0/24
+
+  SageMakerConfigurations:
+    Domain:
+      Name: rstudio-domain
+      UserProfile: rstudio-user
+  
+  ClusterConfigurations:
+    EMR:
+      Name: sagemaker
+      MasterInstanceType: r4.xlarge
+      CoreInstanceType: r4.xlarge
+      CoreInstanceCount: 2
+      ReleaseVersion: emr-6.9.0
+      IdleTimeout: 7200
+  
+  Artifacts:
+    S3:
+      Bucket: sm-rstudio-emr-blog # change to aws-ml-blog-<region>
+      Prefix: artifacts/ML-9999 # change to artifacts/ML-<XXXX>
+
+Resources:
+  BlogS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join ['-', [!Ref ProjectName, !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+
+  IAM:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        BlogS3Bucket: !Ref BlogS3Bucket
+      TemplateURL: !Sub 
+                - https://s3.${AWS::Region}.amazonaws.com/${Bucket}/${Prefix}/sagemaker-rstudio-iam.yaml
+                - {
+                  Bucket: !FindInMap [Artifacts, S3, Bucket],
+                  Prefix: !FindInMap [Artifacts, S3, Prefix]
+                  }
+
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ProjectName: !Ref ProjectName
+        BlogS3Bucket: !Ref BlogS3Bucket
+        ArtifactsS3Bucket: !FindInMap [Artifacts, S3, Bucket]
+        ArtifactsS3Prefix: !FindInMap [Artifacts, S3, Prefix]
+        VpcCIDR: !FindInMap [VpcConfigurations, CIDR, VPC]
+        PrivateSubnet1CIDR: !FindInMap [VpcConfigurations, CIDR, PrivateSubnet1]
+        PrivateSubnet2CIDR: !FindInMap [VpcConfigurations, CIDR, PrivateSubnet2]
+        LambdaBucketManagementRole: !GetAtt IAM.Outputs.LambdaBucketManagementRole
+      TemplateURL: !Sub 
+                - https://s3.${AWS::Region}.amazonaws.com/${Bucket}/${Prefix}/sagemaker-rstudio-vpc.yaml
+                - {
+                  Bucket: !FindInMap [Artifacts, S3, Bucket],
+                  Prefix: !FindInMap [Artifacts, S3, Prefix]
+                  }
+
+  EMR:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ArtifactsS3Prefix: !FindInMap [Artifacts, S3, Prefix]
+        BlogS3Bucket: !Ref BlogS3Bucket
+        EMRClusterName: !FindInMap [ClusterConfigurations, EMR, Name]
+        EMRMasterInstanceType: !FindInMap [ClusterConfigurations, EMR, MasterInstanceType]
+        EMRCoreInstanceType: !FindInMap [ClusterConfigurations, EMR, CoreInstanceType]
+        EMRCoreInstanceCount: !FindInMap [ClusterConfigurations, EMR, CoreInstanceCount]
+        EMRReleaseVersion: !FindInMap [ClusterConfigurations, EMR, ReleaseVersion]
+        EMRIdleTimeout: !FindInMap [ClusterConfigurations, EMR, IdleTimeout]
+        SubnetIds: !GetAtt VPC.Outputs.SubnetIds
+        EMRMasterSecurityGroup: !GetAtt VPC.Outputs.EMRMasterSecurityGroup
+        EMRCoreSecurityGroup: !GetAtt VPC.Outputs.EMRCoreSecurityGroup
+        EMRServiceSecurityGroup: !GetAtt VPC.Outputs.EMRServiceSecurityGroup
+        EMRClusterServiceRole: !GetAtt IAM.Outputs.EMRClusterServiceRole
+        EMRClusterAutoScalingeRole: !GetAtt IAM.Outputs.EMRClusterAutoScalingeRole
+        EMRClusterInstanceProfile: !GetAtt IAM.Outputs.EMRClusterInstanceProfile
+      TemplateURL: !Sub 
+                - https://s3.${AWS::Region}.amazonaws.com/${Bucket}/${Prefix}/sagemaker-rstudio-emr.yaml
+                - {
+                  Bucket: !FindInMap [Artifacts, S3, Bucket],
+                  Prefix: !FindInMap [Artifacts, S3, Prefix]
+                  }
+
+  DOMAIN:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: EMR
+    Properties:
+      Parameters:
+        DomainName: !FindInMap [SageMakerConfigurations, Domain, Name]
+        UserProfileName: !FindInMap [SageMakerConfigurations, Domain, UserProfile]
+        ExecutionRoleArn: !GetAtt IAM.Outputs.ExecutionRoleArn
+        DomainExecutionRoleArn: !GetAtt IAM.Outputs.DomainExecutionRoleArn
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        SubnetIds: !GetAtt VPC.Outputs.SubnetIds
+        SecurityGroups: !GetAtt VPC.Outputs.SageMakerSecurityGroup
+        RStudioConnectUrl: !Ref RStudioConnectUrl
+        RStudioPackageManagerUrl: !Ref RStudioPackageManagerUrl
+      TemplateURL: !Sub 
+                - https://s3.${AWS::Region}.amazonaws.com/${Bucket}/${Prefix}/sagemaker-rstudio-domain.yaml
+                - {
+                  Bucket: !FindInMap [Artifacts, S3, Bucket],
+                  Prefix: !FindInMap [Artifacts, S3, Prefix]
+                  }

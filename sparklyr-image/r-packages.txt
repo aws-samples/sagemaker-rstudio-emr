@@ -1,0 +1,6 @@
+renv
+markdown
+rmarkdown
+reticulate
+sparklyr
+ggplot2

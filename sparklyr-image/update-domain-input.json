@@ -1,0 +1,14 @@
+{
+    "DomainId": "d-xxxxxxxxxx",
+    "DefaultUserSettings": {
+        "RSessionAppSettings": {
+            "CustomImages": [
+                {
+                    "ImageName": "sparklyr",
+                    "AppImageConfigName": "sparklyr",
+                    "ImageVersionNumber": 1
+                }
+            ]
+        }
+    }
+}

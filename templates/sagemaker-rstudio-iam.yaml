@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates IAM Roles for SageMaker RStudio domain and EMR
+
+Parameters:
+  BlogS3Bucket:
+    Type: String
+
+Resources:  
+  SageMakerUserExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: / 
+      Policies: 
+        - PolicyName: SageMakerUserExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticmapreduce:ListClusters
+                  - elasticmapreduce:ListInstances
+                Resource: '*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      RoleName: SageMakerUserExecutionRole
+
+  SageMakerDomainExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /    
+      Policies: 
+        - PolicyName: SageMakerDomainExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - license-manager:ExtendLicenseConsumption
+                  - license-manager:ListReceivedLicenses
+                  - license-manager:GetLicense
+                  - license-manager:CheckoutLicense
+                  - license-manager:CheckInLicense
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DeleteLogDelivery
+                  - logs:Describe*
+                  - logs:GetLogDelivery
+                  - logs:GetLogEvents
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:UpdateLogDelivery
+                  - sagemaker:CreateApp
+                Resource: '*'
+      RoleName: SageMakerDomainExecutionRole
+
+  EMRClusterServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - elasticmapreduce.amazonaws.com
+            Action:
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:elasticmapreduce:${AWS::Region}:${AWS::AccountId}:*
+      Path: / 
+      Policies:
+        - PolicyName: EMRClusterServicePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - iam:PassRole
+                Resource: !GetAtt EMRClusterInstanceProfileRole.Arn
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEMRServicePolicy_v2
+      RoleName: EMRClusterServiceRole
+
+  EMRClusterAutoScalingeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - application-autoscaling.amazonaws.com
+                - elasticmapreduce.amazonaws.com
+            Action:
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:elasticmapreduce:${AWS::Region}:${AWS::AccountId}:*
+      Path: / 
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforAutoScalingRole
+      RoleName: EMRClusterAutoScalingeRole
+
+  EMRClusterInstanceProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: / 
+      Policies: 
+        - PolicyName: EMRClusterInstanceProfilePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lakeformation:GetDataAccess
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - glue:CreateDatabase
+                  - glue:UpdateDatabase
+                  - glue:DeleteDatabase
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                  - glue:DeleteTable
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetTableVersions
+                  - glue:CreatePartition
+                  - glue:BatchCreatePartition
+                  - glue:UpdatePartition
+                  - glue:DeletePartition
+                  - glue:BatchDeletePartition
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                  - glue:BatchGetPartitio
+                  - glue:CreateUserDefinedFunction
+                  - glue:UpdateUserDefinedFunction
+                  - glue:DeleteUserDefinedFunction
+                  - glue:GetUserDefinedFunction
+                  - glue:GetUserDefinedFunctions
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${BlogS3Bucket}
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: !Sub arn:aws:s3:::${BlogS3Bucket}/*
+      RoleName: EMRClusterInstanceProfileRole
+
+  EMRClusterInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: EMRClusterInstanceProfileRole
+      Path: /
+      Roles:
+        - !Ref EMRClusterInstanceProfileRole
+
+  LambdaBucketManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LambdaBucketManagementPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: 
+                  - !Sub arn:aws:s3:::${BlogS3Bucket}
+                  - !Sub arn:aws:s3:::${BlogS3Bucket}/*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      RoleName: LambdaBucketManagementRole
+
+Outputs:
+  ExecutionRoleArn:
+    Value: !GetAtt SageMakerUserExecutionRole.Arn
+  DomainExecutionRoleArn:
+    Value: !GetAtt SageMakerDomainExecutionRole.Arn
+  EMRClusterServiceRole:
+    Value: !Ref EMRClusterServiceRole
+  EMRClusterAutoScalingeRole:
+    Value: !Ref EMRClusterAutoScalingeRole
+  EMRClusterInstanceProfile:
+    Value: !Ref EMRClusterInstanceProfile
+  LambdaBucketManagementRole:
+    Value: !GetAtt LambdaBucketManagementRole.Arn
