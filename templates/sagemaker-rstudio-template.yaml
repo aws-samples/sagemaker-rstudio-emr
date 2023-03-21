@@ -58,9 +58,8 @@ Mappings:
   
   Artifacts:
     S3:
-      Bucket: sm-rstudio-emr-blog # change to aws-ml-blog-<region>
-      Prefix: artifacts/ML-9999 # change to artifacts/ML-<XXXX>
-
+      Bucket: aws-blogs-artifacts-public
+      Prefix: artifacts/ML12296 
 Resources:
   BlogS3Bucket:
     Type: AWS::S3::Bucket
