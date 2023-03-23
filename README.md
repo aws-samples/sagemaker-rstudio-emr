@@ -4,7 +4,7 @@ This blog post describes how to connect Amazon SageMaker RStudio to Amazon EMR. 
 ## Architecture
 ![](images/sagemaker-emr.drawio.png)
 
-This repository is apart of the following blog: [Insert Blog Link]. In this blog we will launch infrastructure to create an RStudio Domain and an EMR cluster. From there we will create a custom image for our SageMaker domain connecting the two.  
+This repository is apart of the following blog:https://aws.amazon.com/blogs/machine-learning/connect-amazon-emr-and-rstudio-on-amazon-sagemaker/. In this blog we will launch infrastructure to create an RStudio Domain and an EMR cluster. From there we will create a custom image for our SageMaker domain connecting the two.  
 
 ## Security
 
